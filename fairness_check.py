@@ -1,10 +1,10 @@
-import numpy as np
+from fairlearn.metrics import MetricFrame, selection_rate, true_positive_rate, false_negative_rate
+from sklearn.metrics import accuracy_score
+import joblib
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-import joblib
 
-# Load model and data
+# Load model and raw data
 model = joblib.load('model.joblib')
 df = pd.read_csv("~/data.csv")  # Replace with your actual CSV filename
 
@@ -24,18 +24,16 @@ if 'sno' in df.columns:
 X = df.drop('target', axis=1)
 y = df['target']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+y_true = y_test  # True labels
+y_pred = model.predict(X_test)
+sensitive_feature = X_test['gender']  # or gender encoded
+metrics = {
+    'accuracy': accuracy_score,
+    'selection_rate': selection_rate,
+    'true_positive_rate': true_positive_rate,
+    'false_negative_rate': false_negative_rate
+}
 
-poison_frac = 0.2
-indices_to_poison = np.random.choice(len(y_train), int(poison_frac * len(y_train)), replace=False)
-y_train_poisoned = y_train.copy()
-y_train_poisoned.iloc[indices_to_poison] = 1 - y_train_poisoned.iloc[indices_to_poison]  # Flip 0->1, 1->0
-model_poisoned = RandomForestClassifier(random_state=42)
-model_poisoned.fit(X_train, y_train_poisoned)
+metric_frame = MetricFrame(metrics=metrics, y_true=y_true, y_pred=y_pred, sensitive_features=sensitive_feature)
+print(metric_frame.by_group)
 
-from sklearn.metrics import accuracy_score
-
-y_pred_clean = model.predict(X_test)
-y_pred_poisoned = model_poisoned.predict(X_test)
-
-print(f"Clean model accuracy: {accuracy_score(y_test, y_pred_clean)}")
-print(f"Poisoned model accuracy: {accuracy_score(y_test, y_pred_poisoned)}")
