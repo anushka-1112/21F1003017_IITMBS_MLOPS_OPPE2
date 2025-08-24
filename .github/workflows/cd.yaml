@@ -41,24 +41,24 @@ jobs:
       - name: Configure Docker
         run: gcloud auth configure-docker europe-west3-docker.pkg.dev --quiet
 
-      # - name: Build and push Docker image
-      #   run: |
-      #     IMAGE=europe-west3-docker.pkg.dev/logical-river-338214/my-repo/heart-disease-api:latest
-      #     docker build -t $IMAGE .
-      #     docker push $IMAGE
+      - name: Build and push Docker image
+        run: |
+          IMAGE=europe-west3-docker.pkg.dev/logical-river-338214/my-repo/heart-disease-api:latest
+          docker build -t $IMAGE .
+          docker push $IMAGE
 
       - name: Get GKE credentials
         run: |
           gcloud container clusters get-credentials demo-log-ml-cluster --zone us-central1-a --project logical-river-338214
 
-      # - name: Deploy to GKE
-      #   run: |
-      #     kubectl delete deployment.apps/heart-disease-api --ignore-not-found
-      #     kubectl delete service/heart-disease-service --ignore-not-found
-      #     kubectl delete hpa.autoscaling/heart-disease-hpa --ignore-not-found
-      #     kubectl apply -f k8s/deployment.yaml
-      #     kubectl apply -f k8s/service.yaml
-      #     kubectl apply -f k8s/hpa.yaml
+      - name: Deploy to GKE
+        run: |
+          kubectl delete deployment.apps/heart-disease-api --ignore-not-found
+          kubectl delete service/heart-disease-service --ignore-not-found
+          kubectl delete hpa.autoscaling/heart-disease-hpa --ignore-not-found
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/hpa.yaml
 
       - name: Wait for Pod Ready, Extract External IP
         id: getip

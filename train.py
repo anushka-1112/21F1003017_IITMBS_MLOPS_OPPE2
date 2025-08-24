@@ -8,7 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 import joblib
 
 # --- Step 1: Load Data ---
-df = pd.read_csv("heart_disease.csv")  # Replace with your actual CSV filename
+df = pd.read_csv("data/data.csv")  # Replace with your actual CSV filename
 
 # --- Step 2: Preprocess Data ---
 # Map 'gender' and 'target' to numeric
