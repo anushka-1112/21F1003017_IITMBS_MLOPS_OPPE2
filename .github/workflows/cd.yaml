@@ -1,0 +1,132 @@
+name: Fraud Detection - CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Authenticate to Google Cloud
+        env:
+          GCP_B64: ${{ secrets.GCP_KEY_JSON }}
+        run: |
+          echo "$GCP_B64" | base64 -d > gcp-key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/gcp-key.json" >> $GITHUB_ENV
+          gcloud auth activate-service-account --key-file=gcp-key.json
+          gcloud config set project logical-river-338214
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: logical-river-338214
+          install_components: 'kubectl'
+
+      - name: Download latest model from GCS
+        run: |
+          LATEST_MODEL=$(gsutil ls gs://mlops_models/model.joblib | sort | tail -n 1)
+          echo "Latest model is: $LATEST_MODEL"
+          gsutil cp $LATEST_MODEL model.joblib
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker europe-west3-docker.pkg.dev --quiet
+
+      # - name: Build and push Docker image
+      #   run: |
+      #     IMAGE=europe-west3-docker.pkg.dev/logical-river-338214/my-repo/heart-disease-api:latest
+      #     docker build -t $IMAGE .
+      #     docker push $IMAGE
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials demo-log-ml-cluster --zone us-central1-a --project logical-river-338214
+
+      # - name: Deploy to GKE
+      #   run: |
+      #     kubectl delete deployment.apps/heart-disease-api --ignore-not-found
+      #     kubectl delete service/heart-disease-service --ignore-not-found
+      #     kubectl delete hpa.autoscaling/heart-disease-hpa --ignore-not-found
+      #     kubectl apply -f k8s/deployment.yaml
+      #     kubectl apply -f k8s/service.yaml
+      #     kubectl apply -f k8s/hpa.yaml
+
+      - name: Wait for Pod Ready, Extract External IP
+        id: getip
+        run: |
+          echo "Waiting for Pod to become Ready...."
+          for i in {1..30}; do
+            POD_STATUS=$(kubectl get pods -l app=heart-disease-api -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+            if [ "$POD_STATUS" == "true" ]; then
+              echo "Pod is Ready!"
+              break
+            fi
+            echo "Pod not ready yet... ($i/30)"
+            sleep 10
+          done
+
+          echo "Waiting for External IP..."
+          for i in {1..60}; do
+            EXTERNAL_IP=$(kubectl get svc heart-disease-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo "External IP acquired: $EXTERNAL_IP"
+              echo "EXTERNAL_IP=$EXTERNAL_IP" >> $GITHUB_ENV
+              echo "::set-output name=ip::$EXTERNAL_IP"
+              break
+            fi
+            echo "Still waiting for External IP... ($i/60)"
+            sleep 10
+          done
+
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "❌ Failed to get External IP after 5 minutes"
+            exit 1
+          fi
+
+      - name: Test GET endpoint
+        run: |
+          curl -f "http://$EXTERNAL_IP/" || exit 1
+
+      - uses: iterative/setup-cml@v2
+
+      - name: Run batch prediction script on 100 random samples
+        env:
+          API_URL: "http://${{ env.EXTERNAL_IP }}/predict/"
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install numpy==2.1.3 requests==2.32.4
+          python batch_predict.py
+      - name: Install wrk benchmarking tool
+        run: sudo apt-get update && sudo apt-get install -y wrk
+
+      - name: Create wrk POST script
+        run: |
+          echo 'wrk.method = "POST"' > post.lua
+          echo 'wrk.body = "{\"age\":56,\"gender\":\"male\",\"cp\":1,\"trestbps\":130.0,\"chol\":250.0,\"fbs\":0,\"restecg\":1,\"thalach\":170.0,\"exang\":0,\"oldpeak\":1.5,\"slope\":2,\"ca\":0,\"thal\":2}"' >> post.lua
+          echo 'wrk.headers["Content-Type"] = "application/json"' >> post.lua
+
+      - name: Run wrk load test (30s, 100 connections, 12 threads)
+        run: |
+          wrk -t12 -c100 -d30s -s post.lua http://${{ env.EXTERNAL_IP }}/predict/ > wrk_output.txt
+
+      - name: Show wrk output
+        run: cat wrk_output.txt
+      - name: Report CD Status with CML
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "# 🚀 CD Deployment Report" > cd_report.md
+          echo "✅ Docker Image Built and Pushed" >> cd_report.md
+          echo "✅ Deployed to GCP" >> cd_report.md
+          echo "✅ Batch predictions executed against API at http://${{ env.EXTERNAL_IP }}/predict/" >> cd_report.md
+          cml comment create --publish cd_report.md

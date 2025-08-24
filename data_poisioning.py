@@ -1,25 +1,41 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+import joblib
 
-def poison_labels(input_csv: str, output_csv: str, label_col: str = "Class", flip_percent: float = 0.05, random_state: int = 42):
-    
-    df = pd.read_csv(input_csv)
+# Load model and data
+model = joblib.load('model.joblib')
+df = pd.read_csv("~/data.csv")  # Replace with your actual CSV filename
 
-    if label_col not in df.columns:
-        raise ValueError(f"Label column '{label_col}' not found in CSV.")
+# --- Step 2: Preprocess Data ---
+# Map 'gender' and 'target' to numeric
+df['gender'] = df['gender'].map({'male': 1, 'female': 0})
+df['target'] = df['target'].map({'yes': 1, 'no': 0})
 
-    # Number of samples to flip
-    n_samples = len(df)
-    n_flip = int(flip_percent * n_samples)
+# Fill missing numeric values (simple strategy, replace with domain-specific as needed)
+df = df.fillna(df.median(numeric_only=True))
 
-    np.random.seed(random_state)
-    flip_indices = np.random.choice(df.index, size=n_flip, replace=False)
+# Drop non-feature columns if present
+if 'sno' in df.columns:
+    df = df.drop(columns=['sno'])
 
-    # Flip labels: 1 -> 0, 0 -> 1
-    df.loc[flip_indices, label_col] = 1 - df.loc[flip_indices, label_col]
+# --- Step 3: Train/Test Split ---
+X = df.drop('target', axis=1)
+y = df['target']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Save poisoned data
-    df.to_csv(output_csv, index=False)
+poison_frac = 0.2
+indices_to_poison = np.random.choice(len(y_train), int(poison_frac * len(y_train)), replace=False)
+y_train_poisoned = y_train.copy()
+y_train_poisoned.iloc[indices_to_poison] = 1 - y_train_poisoned.iloc[indices_to_poison]  # Flip 0->1, 1->0
+model_poisoned = RandomForestClassifier(random_state=42)
+model_poisoned.fit(X_train, y_train_poisoned)
 
-    print(f"✅ Flipped {n_flip} labels ({flip_percent*100:.1f}%) and saved to {output_csv}")
-    return df
+from sklearn.metrics import accuracy_score
+
+y_pred_clean = model.predict(X_test)
+y_pred_poisoned = model_poisoned.predict(X_test)
+
+print(f"Clean model accuracy: {accuracy_score(y_test, y_pred_clean)}")
+print(f"Poisoned model accuracy: {accuracy_score(y_test, y_pred_poisoned)}")
