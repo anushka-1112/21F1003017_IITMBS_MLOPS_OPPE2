@@ -77,7 +77,7 @@ def main():
         results.append(result)
 
     # Save all results to file for reference
-    with open('batch_prediction_results.jsonl', 'w') as f:
+    with open('batch_prediction_results.json', 'w') as f:
         for entry in results:
             f.write(json.dumps(entry) + '\n')
 
